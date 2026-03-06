@@ -4,7 +4,7 @@
 
 [Live Site](https://likethisgame.com)
 
-![likethisgame](https://likethisgame.com/og-image.png)
+![likethisgame](screenshot.png)
 
 ## What is LikeThisGame?
 
