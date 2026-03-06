@@ -38,31 +38,21 @@ Search for any game and get AI-powered recommendations for similar titles. Built
 
 ## Architecture
 
-```
-┌─ Request Flow ───────────────────────────────────────────────┐
-│                                                              │
-│ POST /api/recommend                                          │
-│          |                                                   │
-│     Redis Cache ---hit---> JSON response (sub-second)        │
-│          |                                                   │
-│         miss                                                 │
-│          |                                                   │
-│ Turnstile --> Budget check --> Rate limit --> SSE slot        │
-│          |                                                   │
-│   getCandidatePool()                                         │
-│   (IGDB similar + 2024+ games + genre scoring)               │
-│          |                                                   │
-│   Gemini 2.5 Flash --fail--> DeepSeek --fail--> GPT-4o      │
-│          |                                                   │
-│     SSE Stream --> RecommendationExtractor                   │
-│          |              (streaming JSON parser)               │
-│          |                                                   │
-│   +--------------+------------------+                        │
-│   |              |                  |                        │
-│ setCache    DB upsert         SSE complete                   │
-│  (24h)     (non-blocking)      --> client                    │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    A[POST /api/recommend] --> B{Redis Cache}
+    B -- hit --> C[JSON response\nsub-second]
+    B -- miss --> D[Turnstile + Budget check + Rate limit]
+    D --> E[getCandidatePool\nIGDB similar + 2024+ games + genre scoring]
+    E --> F[Gemini 2.5 Flash]
+    F -- fail --> G[DeepSeek]
+    G -- fail --> H[GPT-4o-mini]
+    F --> I[SSE Stream\nRecommendationExtractor]
+    G --> I
+    H --> I
+    I --> J[setCache 24h]
+    I --> K[DB upsert\nnon-blocking]
+    I --> L[SSE complete\n--> client]
 ```
 
 ## Notable Engineering Decisions
