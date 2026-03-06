@@ -39,34 +39,30 @@ Search for any game and get AI-powered recommendations for similar titles. Built
 ## Architecture
 
 ```
-User Search
-    │
-    ▼
-┌─ Redis Cache ──── hit ──→ JSON response (sub-second)
-│       │
-│      miss
-│       │
-│   Turnstile verify → Budget check → Rate limit → SSE slot acquire
-│       │
-│       ▼
-│   getCandidatePool()
-│   ├── IGDB similarGames (franchise-filtered)
-│   └── 2024+ games (genre/tag relevance scoring)
-│       │
-│       ▼
-│   Gemini 2.5 Flash ──→ SSE Stream ──→ Client
-│       │                     │
-│      fail                   ▼
-│       ▼              RecommendationExtractor
-│   DeepSeek ──fail──→ GPT-4o-mini    (streaming JSON parser)
-│                          │
-│                          ▼
-│                    enrichWithCanonicalImages()
-│                          │
-│              ┌───────────┴───────────┐
-│              ▼                       ▼
-│        setCache(24h)          DB upsert (non-blocking)
-└──────────────────────────────────────────────────────
+┌─ Request Flow ───────────────────────────────────────────────┐
+│                                                              │
+│ POST /api/recommend                                          │
+│          |                                                   │
+│     Redis Cache ---hit---> JSON response (sub-second)        │
+│          |                                                   │
+│         miss                                                 │
+│          |                                                   │
+│ Turnstile --> Budget check --> Rate limit --> SSE slot        │
+│          |                                                   │
+│   getCandidatePool()                                         │
+│   (IGDB similar + 2024+ games + genre scoring)               │
+│          |                                                   │
+│   Gemini 2.5 Flash --fail--> DeepSeek --fail--> GPT-4o      │
+│          |                                                   │
+│     SSE Stream --> RecommendationExtractor                   │
+│          |              (streaming JSON parser)               │
+│          |                                                   │
+│   +--------------+------------------+                        │
+│   |              |                  |                        │
+│ setCache    DB upsert         SSE complete                   │
+│  (24h)     (non-blocking)      --> client                    │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ## Notable Engineering Decisions
