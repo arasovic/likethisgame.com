@@ -41,16 +41,16 @@ Search for any game and get AI-powered recommendations for similar titles. Built
 
 ```mermaid
 flowchart TD
-    A[POST /api/recommend] --> B{Wildcard?}
-    B -- no --> C{Redis Cache}
-    B -- yes --> W[Random Model Selection<br/>6 models, temp 0.95]
-    C -- hit --> D[JSON response<br/>sub-second]
-    C -- miss --> E[Turnstile + Budget check + Rate limit]
-    E --> F[getCandidatePool<br/>IGDB similar + 2024+ games + genre scoring]
+    A[POST /api/recommend] --> B{Redis Cache<br/>normal ns / wildcard ns}
+    B -- hit --> C[JSON response<br/>sub-second]
+    B -- miss --> D[Turnstile + Budget check + Rate limit]
+    D --> E{Wildcard?}
+    E -- no --> F[getCandidatePool<br/>IGDB similar + 2024+ games]
+    E -- yes --> W[Random Model Selection<br/>6 models, temp 0.95]
+    W --> F
     F --> G[Gemini 2.5 Flash]
     G -- fail --> H[DeepSeek]
     H -- fail --> I[GPT-4o-mini]
-    W --> E
     G --> J[SSE Stream<br/>RecommendationExtractor]
     H --> J
     I --> J
