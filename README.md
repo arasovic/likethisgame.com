@@ -31,6 +31,7 @@ Search for any game and get AI-powered recommendations for similar titles. Built
 | Cache | Redis (ioredis) + circuit breaker |
 | AI (primary) | Gemini 2.5 Flash (via OpenRouter) |
 | AI (fallback chain) | Gemini direct → DeepSeek → GPT-4o-mini |
+| AI (wildcard mode) | Random model per request (Gemini, GPT-4o-mini, Llama 4 Maverick, Grok 3 Mini, Claude 3 Haiku, DeepSeek) |
 | Game Data | IGDB API |
 | Security | Cloudflare Turnstile + FingerprintJS v5 |
 | Monitoring | Sentry + OpenPanel + Clarity |
@@ -40,19 +41,22 @@ Search for any game and get AI-powered recommendations for similar titles. Built
 
 ```mermaid
 flowchart TD
-    A[POST /api/recommend] --> B{Redis Cache}
-    B -- hit --> C[JSON response<br/>sub-second]
-    B -- miss --> D[Turnstile + Budget check + Rate limit]
-    D --> E[getCandidatePool<br/>IGDB similar + 2024+ games + genre scoring]
-    E --> F[Gemini 2.5 Flash]
-    F -- fail --> G[DeepSeek]
-    G -- fail --> H[GPT-4o-mini]
-    F --> I[SSE Stream<br/>RecommendationExtractor]
-    G --> I
-    H --> I
-    I --> J[setCache 24h]
-    I --> K[DB upsert<br/>non-blocking]
-    I --> L[SSE complete<br/>--> client]
+    A[POST /api/recommend] --> B{Wildcard?}
+    B -- no --> C{Redis Cache}
+    B -- yes --> W[Random Model Selection<br/>6 models, temp 0.95]
+    C -- hit --> D[JSON response<br/>sub-second]
+    C -- miss --> E[Turnstile + Budget check + Rate limit]
+    E --> F[getCandidatePool<br/>IGDB similar + 2024+ games + genre scoring]
+    F --> G[Gemini 2.5 Flash]
+    G -- fail --> H[DeepSeek]
+    H -- fail --> I[GPT-4o-mini]
+    W --> E
+    G --> J[SSE Stream<br/>RecommendationExtractor]
+    H --> J
+    I --> J
+    J --> K[setCache<br/>24h normal / 6h wildcard]
+    J --> L[DB upsert + model log<br/>non-blocking]
+    J --> M[SSE complete<br/>--> client]
 ```
 
 ## Notable Engineering Decisions
@@ -66,6 +70,7 @@ flowchart TD
   4. Anomaly detection (>5 fingerprints/IP/hour → block)
   5. Cloudflare Turnstile (invisible CAPTCHA, only on cache miss)
 - **4-model AI fallback chain**: OpenRouter Gemini → Direct Gemini → DeepSeek → GPT-4o-mini. Each provider uses the same OpenAI SDK with `baseURL` override.
+- **Wildcard mode**: Randomly selects from 6 AI models (Gemini, GPT-4o-mini, Llama 4 Maverick, Grok 3 Mini, Claude 3 Haiku, DeepSeek) per request with elevated temperature (0.95 vs 0.50). Custom system prompt overrides force cross-genre recommendations. Separate cache namespace (6h TTL vs 24h) and client-side cache isolation so normal/wildcard results don't interfere. Model name logged per request for quality analysis.
 - **Organic database growth**: Googlebot's crawl chains trigger IGDB lookups for unknown games, passively expanding the database from 24K to 26K+.
 - **Programmatic SEO**: ISR pages with JSON-LD (VideoGame + ItemList + FAQPage), 3-part sitemap, IndexNow for Bing/Yandex.
 
