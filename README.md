@@ -14,11 +14,11 @@ Search for any game and get AI-powered recommendations for similar titles. Built
 
 | Metric | Value |
 |--------|-------|
-| Games in database | 26,600+ |
-| Recommendation records | 12,700+ |
-| Games with recommendations | 7,500+ |
-| Test coverage | 21 files, ~447 tests |
-| Top-tier coverage (500+ ratings) | 100% |
+| Games in database | 33,300+ |
+| Recommendation records | 15,600+ |
+| Games with recommendations | 15,600+ |
+| Test coverage | 20 files, 494 tests |
+| Top-tier coverage (500+ ratings) | 99%+ (348/350) |
 
 ## Tech Stack
 
@@ -34,7 +34,8 @@ Search for any game and get AI-powered recommendations for similar titles. Built
 | AI (wildcard mode) | Random model per request (Gemini, GPT-4o-mini, Llama 4 Maverick, Grok 3 Mini, Claude 3 Haiku, DeepSeek) |
 | Game Data | IGDB API |
 | Security | Cloudflare Turnstile + FingerprintJS v5 |
-| Monitoring | Sentry + OpenPanel + Clarity |
+| Monitoring | Sentry + Umami Cloud + Clarity |
+| Observability | Grafana + Prometheus + Loki + Promtail |
 | Hosting | Hetzner CX33 + Coolify + Cloudflare CDN |
 
 ## Architecture
@@ -71,8 +72,9 @@ flowchart TD
   5. Cloudflare Turnstile (invisible CAPTCHA, only on cache miss)
 - **4-model AI fallback chain**: OpenRouter Gemini → Direct Gemini → DeepSeek → GPT-4o-mini. Each provider uses the same OpenAI SDK with `baseURL` override.
 - **Wildcard mode**: Randomly selects from 6 AI models (Gemini, GPT-4o-mini, Llama 4 Maverick, Grok 3 Mini, Claude 3 Haiku, DeepSeek) per request with elevated temperature (0.95 vs 0.50). Custom system prompt overrides force cross-genre recommendations. Separate cache namespace (6h TTL vs 24h) and client-side cache isolation so normal/wildcard results don't interfere. Model name logged per request for quality analysis.
-- **Organic database growth**: Googlebot's crawl chains trigger IGDB lookups for unknown games, passively expanding the database from 24K to 26K+.
+- **Organic database growth**: Googlebot's crawl chains trigger IGDB lookups for unknown games, passively expanding the database from 24K to 33K+.
 - **Programmatic SEO**: ISR pages with JSON-LD (VideoGame + ItemList + FAQPage), 3-part sitemap, IndexNow for Bing/Yandex.
+- **Full observability stack**: Grafana dashboards + Prometheus metrics (4 exporters, 9 alert rules) + Loki log aggregation with Promtail (Docker service discovery, 14-day retention). All behind Cloudflare Tunnel + Access.
 
 ## Source Code
 
