@@ -4,107 +4,107 @@
 
 [Live Site](https://likethisgame.com)
 
-![likethisgame](screenshot.png)
+![LikeThisGame homepage](assets/home.jpg)
 
 ## What is LikeThisGame?
 
-Search for any game and get AI-powered recommendations for similar titles. Built on IGDB's database with real-time SSE streaming, multi-model AI fallback, and a 5-layer cost protection system.
+Pick a game you love, choose what you want to match (story, difficulty, open world, multiplayer, and more), and get AI-picked alternatives streamed in real time. Every recommendation comes with a match score, the reasons it fits, IGDB cover art, trailers, and store links. It runs on IGDB's catalog, a self-hosted Next.js app, and Cloudflare in front, with a layered cost-protection system that keeps AI spend bounded.
+
+| Recommendations | Criteria builder |
+|---|---|
+| ![Recommendation card with match score and reasons](assets/recommendation.png) | ![Criteria selector and Wildcard Mode](assets/search.png) |
+
+| Game detail page | Mobile |
+|---|---|
+| ![How Long to Beat, Steam reviews, Steam Deck status, and stores](assets/game-details.png) | <img src="assets/mobile-home.jpg" alt="Mobile homepage" width="48%"> <img src="assets/mobile-recommendation.png" alt="Mobile recommendation card" width="48%"> |
 
 ## Stats
 
+As of 2026-09-30:
+
 | Metric | Value |
 |--------|-------|
-| Games in database | 34,000+ |
-| Recommendation records | 15,900+ |
-| Games with recommendations | 15,900+ |
-| Test coverage | 20 files, 494 tests |
-| Top-tier coverage (500+ ratings) | 99.7% (349/350) |
+| Games in database | 64,000+ |
+| Games with published recommendations | 17,400+ |
+| Test suite | 222 files, 2,538 tests |
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Framework | Next.js 16 (App Router, standalone) |
+| Framework | Next.js 16 (App Router, standalone output, Turbopack) |
 | UI | React 19 + Tailwind CSS v4 |
-| Database | SQLite (better-sqlite3, WAL mode) |
-| ORM | Drizzle ORM |
+| Database | SQLite (better-sqlite3, WAL mode) + Drizzle ORM |
 | Cache | Redis (ioredis) + circuit breaker |
-| AI (production) | Gemini 2.5 Flash via OpenRouter |
-| AI (alternates) | Direct Gemini, DeepSeek, OpenAI — env-swappable |
-| AI (wildcard mode) | Random model per request (Gemini, GPT-4o-mini, Llama 4 Maverick, Grok 3 Mini, Claude 3 Haiku, DeepSeek) |
-| Game Data | IGDB API |
-| Security | Cloudflare Turnstile + FingerprintJS v5 |
-| Monitoring | Sentry + Umami Cloud + Clarity |
-| Observability | Grafana + Prometheus + Loki + Promtail |
-| Hosting | Hetzner CX33 + Coolify + Cloudflare CDN |
+| AI (recommendations) | OpenAI GPT-6 Luna via OpenRouter, pinned provider routing |
+| AI (baseline + intros) | Gemini 2.5 Flash baseline profile, Gemini 2.5 Flash Lite for SEO intro text |
+| AI (Wildcard Mode) | Weighted split between Grok 4.3 and DeepSeek Chat |
+| AI (offline ranking) | Jev (TypeSafe System One) typed judgments in the weekly content pipeline |
+| Game data | IGDB, HowLongToBeat, IsThereAnyDeal, Steam reviews, ProtonDB, Twitch |
+| Security | Cloudflare Turnstile + FingerprintJS v5 + Cloudflare WAF |
+| Product analytics | Sentry + Umami Cloud + Microsoft Clarity |
+| Observability | Prometheus + Loki + Alertmanager + Grafana, Uptime Kuma |
+| Hosting | Hetzner CX33 + Coolify + Cloudflare (Full Strict TLS) |
+| Asset delivery | Cloudflare R2 + Workers + Durable Objects |
+| Testing | Vitest + React Testing Library + MSW + axe-core + Zod contract tests |
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    A[POST /api/recommend] --> B{Redis Cache<br/>normal ns / wildcard ns}
+    A[POST /api/recommend] --> B{Redis cache<br/>criteria ns / wildcard ns}
     B -- hit --> C[JSON response<br/>sub-second]
-    B -- miss --> D[Turnstile + Budget check + Rate limit]
+    B -- miss --> D[Turnstile + rate limits<br/>per-IP daily cap + global AI budget]
     D --> E{Wildcard?}
-    E -- no --> F[getCandidatePool<br/>IGDB similar + 2024+ games]
-    E -- yes --> W[Random Model Selection<br/>6 models, temp 0.95]
-    W --> F
-    F --> G[Gemini 2.5 Flash]
-    G -- fail --> H[DeepSeek]
-    H -- fail --> I[GPT-4o-mini]
-    G --> J[SSE Stream<br/>RecommendationExtractor]
-    H --> J
-    I --> J
-    J --> K[setCache<br/>24h normal / 6h wildcard]
-    J --> L[DB upsert + model log<br/>non-blocking]
-    J --> M[SSE complete<br/>--> client]
+    E -- no --> F[Candidate pool<br/>IGDB similar + recent releases<br/>source franchise filtered out]
+    F --> G[GPT-6 Luna via OpenRouter<br/>JSON mode, temp 0.5]
+    E -- yes --> W[Grok 4.3 / DeepSeek Chat<br/>weighted pick, temp 0.95]
+    G --> J[SSE stream<br/>RecommendationExtractor]
+    W --> J
+    J --> K[IGDB covers + store links]
+    K --> L[setCache<br/>24h criteria / 6h wildcard]
+    K --> M[Share record + request log<br/>non-blocking]
+    K --> N[SSE complete --> client]
 ```
 
 ## Notable Engineering Decisions
 
-- **SSE streaming with custom JSON parser**: `RecommendationExtractor` does character-by-character brace-depth tracking to yield each recommendation object as soon as the AI completes it, not waiting for the full response.
-- **Circuit breaker on Redis**: 3-state (closed/open/half-open), 3 failures → open, 30s reset. Redis down doesn't crash the app; it degrades gracefully.
-- **5-layer cost protection**:
-  1. Sliding window rate limit (Lua script, IP + fingerprint)
-  2. Daily AI budget (atomic Redis INCR, default 200 req/day)
-  3. Criteria combo dedup (8 unique combos/IP/hour via SHA-256)
-  4. Anomaly detection (>5 fingerprints/IP/hour → block)
-  5. Cloudflare Turnstile (invisible CAPTCHA, only on cache miss)
-- **AI provider** (production: OpenRouter, Gemini 2.5 Flash): Single shared OpenAI SDK client with `baseURL` override across four supported providers (OpenRouter, Direct Gemini, DeepSeek, OpenAI). Provider-agnostic by design — swapping is a one-line env change. Production has run on OpenRouter for cost/throughput reasons since the last regeneration cycle.
-- **Wildcard mode**: Randomly selects from 6 AI models (Gemini, GPT-4o-mini, Llama 4 Maverick, Grok 3 Mini, Claude 3 Haiku, DeepSeek) per request with elevated temperature (0.95 vs 0.50). Custom system prompt overrides force cross-genre recommendations. Separate cache namespace (6h TTL vs 24h) and client-side cache isolation so normal/wildcard results don't interfere. Model name logged per request for quality analysis.
-- **Organic database growth**: Googlebot's crawl chains trigger IGDB lookups for unknown games, passively expanding the database from 24K to 34K+.
-- **Programmatic SEO**: ISR pages with JSON-LD (VideoGame + ItemList + FAQPage), 3-part sitemap, IndexNow for Bing/Yandex.
-- **Full observability stack**: Grafana dashboards + Prometheus metrics (4 exporters, 9 alert rules) + Loki log aggregation with Promtail (Docker service discovery, 14-day retention). All behind Cloudflare Tunnel + Access.
+- **SSE streaming with a custom JSON parser**: `RecommendationExtractor` tracks brace depth character by character and yields each recommendation as soon as the model finishes it, instead of waiting for the full response. If the provider fails mid-stream, the recommendations already received are kept as an uncached partial result.
+- **Model choice by blind evaluation**: the recommendation model moved from Gemini to the GPT Luna family after a blind side-by-side eval showed better accuracy at a lower cost per request. Rollout is percentage-gated by env var, and each model profile has its own cache key version so a model swap never serves results from another model.
+- **Provider-agnostic AI client**: one OpenAI SDK client with a `baseURL` override works across OpenRouter, direct Gemini, DeepSeek, and OpenAI. Provider routing and price caps are pinned per request.
+- **Wildcard Mode**: a weighted pick between two models at elevated temperature (0.95 vs 0.50), with a system prompt that pushes cross-genre picks. It has its own cache namespace and client-side result state, so criteria and wildcard runs never overwrite each other.
+- **Layered AI cost protection**: sliding-window rate limits (IP + fingerprint), a per-IP daily cap on new generations, a global daily AI budget (atomic Redis counter), criteria-combination dedup, fingerprint/IP anomaly detection, and invisible Turnstile that only runs on a cache miss. Budget checks fail closed when Redis is down.
+- **Redis circuit breaker**: closed/open/half-open states. Redis outages degrade the app gracefully instead of taking it down.
+- **Programmatic SEO**: ISR pages for every game and "games like" list, JSON-LD (VideoGame, ItemList, FAQPage, BreadcrumbList, AggregateRating, Offer), a split sitemap, and IndexNow pings. The personalized `/search` builder is `noindex` and never starts AI generation from a URL alone.
+- **Weekly content pipeline**: a scheduled run seeds new releases, enriches tags, generates recommendation sets behind a quality gate that runs before any AI spend, mirrors images to R2, and notifies IndexNow. Jev scores each candidate for "same named series" and drops sequels a fan already knows, so lists surface discoveries instead of the obvious next entry.
+- **Rich game detail pages**: How Long to Beat, Steam review summary, Steam Deck/ProtonDB status, store links with affiliate tracking (`rel="sponsored"`), IsThereAnyDeal prices and bundles, DLC, franchise, Twitch live streams, and language support. Each third-party source has its own Redis TTL and negative cache, and sections without data are hidden.
+- **Edge asset delivery**: Next.js static assets ship from GitHub Actions to an R2-backed CDN host. IGDB images are served through a private R2 gate Worker; cache misses are coordinated by a Durable Object (`ImageOriginCoordinator`) that rate-limits origin fetches per crawler class. Worker changes go out as a 0% staged version, get smoke-tested, then are promoted.
+- **Multi-layer scraper and crawler defense**: Cloudflare edge rules, an origin-side blocklist, page rate limits and burst detection, a honeypot link network, and an aggregate throttle for aggressive AI crawlers. AI training crawlers are blocked at the edge; AI search and retrieval bots stay allowed, so assistants can still cite the site.
+- **CI/CD**: every push to `main` runs a serialized GitHub Actions pipeline: tests, Docker release artifacts, GHCR, a Coolify webhook, then deploy-ID and cache smoke checks with automatic Cloudflare purge. Docs-only pushes skip the deploy through path filters.
+- **Self-hosted observability**: Prometheus (node, Redis, and a custom Cloudflare exporter), Loki via the Docker log driver, and unit-tested alert rules routed through Alertmanager to Telegram and email. A dead-man's switch pings Uptime Kuma, and origin certificate checks verify the chain and hostname, not just the expiry date. Grafana sits behind Cloudflare Tunnel + Access.
+- **Verified backups**: database and Redis backups go offsite, and each database dump is test-restored and integrity-checked before upload.
 
-## Agent-Ready (2026)
+## Agent-Ready
 
-Achieved **Level 2 — Bot-Aware** (50/100) on [Cloudflare's Agent Readiness benchmark](https://isitagentready.com/likethisgame.com).
+- **Content Signals** in robots.txt: `search=yes, ai-input=yes, ai-train=no`
+- **llms.txt**: a Markdown manifest with AI usage preferences and machine-readable endpoints
+- **Agent Skills discovery** (Cloudflare RFC v0.2.0): three skills (find-similar-games, get-game-details, search-games) with SHA-256 integrity digests
+- **RFC 8288 Link headers** on the root URL: `describedby`, `sitemap`, `agent-skills`
+- **Custom robots.txt route handler**: a typed route that supports directives Next.js `MetadataRoute.Robots` doesn't model
 
-### Implemented
-
-- **Content Signals** (IETF draft) in robots.txt: `search=yes, ai-input=yes, ai-train=no` — declarative AI usage preferences
-- **llms.txt** — Markdown manifest with AI Usage Preferences and machine-readable endpoints
-- **Cloudflare Agent Skills RFC v0.2.0** — discovery index with 3 skills (find-similar-games, get-game-details, search-games) + SHA-256 integrity digests
-- **RFC 8288 Link headers** on root URL — `describedby`, `sitemap`, `agent-skills` relations
-- **Custom robots.txt route handler** — TypeScript route preserves type safety while supporting non-standard directives that Next.js `MetadataRoute.Robots` doesn't model
-
-### Deferred — Architectural Trade-Off
-
-The remaining 50 points (Markdown for Agents, public API catalog, MCP server, OAuth discovery, WebMCP) were intentionally scoped out of this iteration. Each was evaluated against the existing security posture and architectural fit:
+### Deferred on purpose
 
 | Capability | Reasoning |
 |------------|-----------|
-| OAuth/OIDC Discovery, OAuth Protected Resource | Not an OAuth provider — publishing discovery metadata for authentication paths that don't exist would mislead agents |
-| Public API + RFC 9727 Catalog | A stable agent-facing JSON contract would conflict with the existing 6-layer scraper defense (Cloudflare WAF, application-level CIDR blocklist, rate limit, burst detection, honeypot network, content fingerprinting). Scoped for a future iteration alongside a designed gating model |
-| MCP Server Card + endpoint | Server card discovery without a backing endpoint would mislead MCP-compatible clients. Scoped alongside a dedicated server-side iteration once the protocol stabilizes |
-| Markdown for Agents | Implementation touches `proxy.ts` (rate limiting, scraper defense, route guard). Scoped for a dedicated review cycle where defense-layer changes can be validated independently |
-| WebMCP | Browser API in Chrome 146 Canary behind a feature flag; W3C Candidate Recommendation, spec recently revised. Scoped for a future iteration once the spec stabilizes |
-
-The score reflects a deliberate equilibrium between agent-friendliness and the existing security posture. Each deferred capability has documented reassessment conditions.
+| OAuth/OIDC discovery | The site has no OAuth provider. Publishing discovery metadata for auth paths that don't exist would mislead agents |
+| Public API + RFC 9727 catalog | A stable agent-facing JSON contract conflicts with the scraper defense. Scoped for a future iteration with a designed gating model |
+| MCP server card + endpoint | A server card without a backing endpoint would mislead MCP clients. Scoped for a dedicated server-side iteration |
+| Markdown for Agents | Touches the request proxy (rate limiting, scraper defense, route guard). Scoped for a review cycle where defense changes can be validated on their own |
+| WebMCP | Still behind a browser flag with a moving spec. Waiting for it to stabilize |
 
 ## Source Code
 
-Source code is in a private repository. This repo serves as a public project overview.
+Source code is in a private repository. This repo is a public project overview.
 
 ## Author
 
