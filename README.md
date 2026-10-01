@@ -12,7 +12,7 @@ Pick a game you love, choose what you want to match (story, difficulty, open wor
 
 | Recommendations | Criteria builder |
 |---|---|
-| ![Recommendation card with match score and reasons](assets/recommendation.png) | ![Criteria selector and Wildcard Mode](assets/search.png) |
+| ![Recommendation card with match score and reasons](assets/recommendation.png) | ![Grouped criteria tiles with suggested picks, Wildcard Mode, and the recommend button](assets/search.png) |
 
 | Game detail page | Mobile |
 |---|---|
@@ -20,20 +20,20 @@ Pick a game you love, choose what you want to match (story, difficulty, open wor
 
 ## Stats
 
-As of 2026-09-30:
+As of 2026-10-01:
 
 | Metric | Value |
 |--------|-------|
 | Games in database | 64,000+ |
 | Games with published recommendations | 17,400+ |
-| Test suite | 222 files, 2,538 tests |
+| Test suite | 227 files, 2,597 tests |
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
 | Framework | Next.js 16 (App Router, standalone output, Turbopack) |
-| UI | React 19 + Tailwind CSS v4 |
+| UI | React 19 + Tailwind CSS v4, token-based theme from a single TypeScript source |
 | Database | SQLite (better-sqlite3, WAL mode) + Drizzle ORM |
 | Cache | Redis (ioredis) + circuit breaker |
 | AI (recommendations) | OpenAI GPT-6 Luna via OpenRouter, pinned provider routing |
@@ -75,6 +75,7 @@ flowchart TD
 - **Wildcard Mode**: a weighted pick between two models at elevated temperature (0.95 vs 0.50), with a system prompt that pushes cross-genre picks. It has its own cache namespace and client-side result state, so criteria and wildcard runs never overwrite each other.
 - **Layered AI cost protection**: sliding-window rate limits (IP + fingerprint), a per-IP daily cap on new generations, a global daily AI budget (atomic Redis counter), criteria-combination dedup, fingerprint/IP anomaly detection, and invisible Turnstile that only runs on a cache miss. Budget checks fail closed when Redis is down.
 - **Redis circuit breaker**: closed/open/half-open states. Redis outages degrade the app gracefully instead of taking it down.
+- **Single-source design tokens**: every UI color, OG image, app icon, and the web manifest read one typed theme object, injected as CSS custom properties at the root layout. Glows and gradients are derived with `color-mix()`, so a palette only supplies base colors and switching it is a one-line change. A unit test fails CI on any raw hex, `rgb()`, or Tailwind palette class in app code.
 - **Programmatic SEO**: ISR pages for every game and "games like" list, JSON-LD (VideoGame, ItemList, FAQPage, BreadcrumbList, AggregateRating, Offer), a split sitemap, and IndexNow pings. The personalized `/search` builder is `noindex` and never starts AI generation from a URL alone.
 - **Weekly content pipeline**: a scheduled run seeds new releases, enriches tags, generates recommendation sets behind a quality gate that runs before any AI spend, mirrors images to R2, and notifies IndexNow. Jev scores each candidate for "same named series" and drops sequels a fan already knows, so lists surface discoveries instead of the obvious next entry.
 - **Rich game detail pages**: How Long to Beat, Steam review summary, Steam Deck/ProtonDB status, store links with affiliate tracking (`rel="sponsored"`), IsThereAnyDeal prices and bundles, DLC, franchise, Twitch live streams, and language support. Each third-party source has its own Redis TTL and negative cache, and sections without data are hidden.
